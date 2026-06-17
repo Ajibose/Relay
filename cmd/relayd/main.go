@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 )
 
@@ -34,6 +35,9 @@ func main() {
 		return
 	}
 
+	fmt.Println("Client connection: ", clientConn)
+	fmt.Println("Visitor connection: ", visitorConn)
+
 	go Forward(visitorConn, clientConn)
 	Forward(clientConn, visitorConn)
 }
@@ -44,7 +48,9 @@ func Forward(conn1 net.Conn, conn2 net.Conn) {
 	for {
 		n, err := conn1.Read(buffer)
 		if err != nil {
-			fmt.Println("Error Reading From Connection: ", conn1)
+			if err != io.EOF {
+				fmt.Println("Error Reading From Connection: ", conn1)
+			}
 			return
 		}
 
