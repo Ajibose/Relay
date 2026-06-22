@@ -25,6 +25,8 @@ func main() {
 	Forward(localConn, tunnelConn)
 }
 
+
+
 func Forward(conn1 net.Conn, conn2 net.Conn) {
 
 	buffer := make([]byte, 2048)

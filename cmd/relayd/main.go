@@ -30,9 +30,7 @@ func main() {
 		return
 	}
 
-	vistorsConnections := make(map[uint32]net.Conn)
-
-	m := tunnel.NewMux(clientConn, vistorsConnections)
+	m := tunnel.NewMux(clientConn)
 
 	go AcceptVisitorConnections(vListener, m)
 	writeToVisitors(m)

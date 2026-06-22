@@ -48,11 +48,11 @@ func (m *Mux) RemoveStream(streamId uint32) {
 	m.StreamsMu.Unlock()
 }
 
-func NewMux(conn net.Conn, streams map[uint32]net.Conn) *Mux {
-	m := &Mux {
-		Conn: conn,
-		Streams: streams,
+func NewMux(conn net.Conn) *Mux {
+	m := &Mux{
+		Conn:    conn,
+		Streams: make(map[uint32]net.Conn),
 	}
-	
+
 	return m
 }
