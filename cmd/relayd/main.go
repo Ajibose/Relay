@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net"
+
+	"github.com/Ajibose/Relay/internal/tunnel"
 )
 
 func main() {
@@ -29,35 +30,64 @@ func main() {
 		return
 	}
 
-	visitorConn, visitorErr := vListener.Accept()
-	if visitorErr != nil {
-		fmt.Println("Connection error", visitorErr)
-		return
-	}
+	vistorsConnections := make(map[uint32]net.Conn)
 
-	fmt.Println("Client connection: ", clientConn)
-	fmt.Println("Visitor connection: ", visitorConn)
+	m := tunnel.NewMux(clientConn, vistorsConnections)
 
-	go Forward(visitorConn, clientConn)
-	Forward(clientConn, visitorConn)
+	go AcceptVisitorConnections(vListener, m)
+	writeToVisitors(m)
 }
 
-func Forward(conn1 net.Conn, conn2 net.Conn) {
-
-	buffer := make([]byte, 2048)
+func writeToVisitors(m *tunnel.Mux) error {
 	for {
-		n, err := conn1.Read(buffer)
+		f, err := tunnel.ReadFrame(m.Conn)
 		if err != nil {
-			if err != io.EOF {
-				fmt.Println("Error Reading From Connection: ", conn1)
-			}
+			return err
+		}
+
+		visitorConn := m.GetStream(f.StreamId)
+		if visitorConn == nil {
+			continue
+		}
+
+		switch f.MsgType {
+		case tunnel.OPEN:
+			continue
+		case tunnel.CLOSE:
+			visitorConn.Close()
+			m.RemoveStream(f.StreamId)
+		default:
+			visitorConn.Write(f.Payload)
+		}
+	}
+}
+
+func AcceptVisitorConnections(vListener net.Listener, m *tunnel.Mux) {
+	for {
+		visitorConn, visitorErr := vListener.Accept()
+		if visitorErr != nil {
+			fmt.Println("Connection error", visitorErr)
 			return
 		}
 
-		_, err = conn2.Write(buffer[:n])
+		streamId := m.AddStream(visitorConn)
+
+		go writeToTunnel(visitorConn, streamId, m)
+	}
+}
+
+func writeToTunnel(visitorConn net.Conn, streamId uint32, m *tunnel.Mux) {
+	defer visitorConn.Close()
+	m.WriteFrame(streamId, tunnel.OPEN, nil)
+	buf := make([]byte, 1024)
+	for {
+		n, err := visitorConn.Read(buf)
 		if err != nil {
-			fmt.Println("Error Writing to Connection: ", conn2)
+			m.RemoveStream(streamId)
+			m.WriteFrame(streamId, tunnel.CLOSE, nil)
 			return
 		}
+
+		m.WriteFrame(streamId, tunnel.DATA, buf[:n])
 	}
 }
