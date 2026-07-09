@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 
 	"github.com/Ajibose/Relay/internal/tunnel"
@@ -40,6 +42,9 @@ func writeToVisitors(m *tunnel.Mux) error {
 	for {
 		f, err := tunnel.ReadFrame(m.Conn)
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				fmt.Println("Error Reading Frame", err)
+			}
 			return err
 		}
 
@@ -76,16 +81,25 @@ func AcceptVisitorConnections(vListener net.Listener, m *tunnel.Mux) {
 
 func writeToTunnel(visitorConn net.Conn, streamId uint32, m *tunnel.Mux) {
 	defer visitorConn.Close()
-	m.WriteFrame(streamId, tunnel.OPEN, nil)
+	defer m.RemoveStream(streamId)
+
+	err := m.WriteFrame(streamId, tunnel.OPEN, nil)
+	if err != nil {
+		return  // tunnel already broken, don't try
+	}
+	
+
 	buf := make([]byte, 1024)
 	for {
 		n, err := visitorConn.Read(buf)
 		if err != nil {
-			m.RemoveStream(streamId)
 			m.WriteFrame(streamId, tunnel.CLOSE, nil)
 			return
 		}
 
-		m.WriteFrame(streamId, tunnel.DATA, buf[:n])
+		err = m.WriteFrame(streamId, tunnel.DATA, buf[:n])
+		if err != nil {
+			return // tunnel broken up mid-stream, give up on the stream
+		}
 	}
 }

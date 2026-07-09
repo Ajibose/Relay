@@ -2,7 +2,6 @@ package tunnel
 
 import (
 	"encoding/binary"
-	"fmt"
 	"io"
 )
 
@@ -28,13 +27,13 @@ func WriteFrame(wr io.Writer, streamId uint32, msgType uint8, payload []byte) er
 
 	_, err := wr.Write(header)
 	if err != nil {
-		fmt.Println("Error writing header", err)
+		// fmt.Println("Error writing header", err)
 		return err
 	}
 
 	_, err = wr.Write(payload)
 	if err != nil {
-		fmt.Println("Error writing payload", err)
+		// fmt.Println("Error writing payload", err)
 		return err
 	}
 
@@ -48,7 +47,6 @@ func ReadFrame(rd io.Reader) (Frame, error) {
 
 	_, err := io.ReadFull(rd, header)
 	if err != nil {
-		fmt.Println("Error reading header", err)
 		return f, err
 	}
 
@@ -60,7 +58,7 @@ func ReadFrame(rd io.Reader) (Frame, error) {
 
 	_, err = io.ReadFull(rd, payload)
 	if err != nil {
-		fmt.Println("Error reading payload", err)
+		// fmt.Println("Error reading payload", err)
 		return f, err
 	}
 

@@ -16,13 +16,28 @@ type Mux struct {
 func (m *Mux) WriteFrame(streamId uint32, msgType uint8, payload []byte) error {
 	m.WriteMu.Lock()
 	defer m.WriteMu.Unlock()
-	
+
 	err := WriteFrame(m.Conn, streamId, msgType, payload)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (m *Mux) CloseAll() {
+	m.StreamsMu.Lock()
+	defer m.StreamsMu.Unlock()
+	for streamId, conn := range m.Streams {
+		conn.Close()
+		delete(m.Streams, streamId)
+	}
+}
+
+func (m *Mux) AddStreamWithID(streamID uint32, conn net.Conn) {
+	m.StreamsMu.Lock()
+	defer m.StreamsMu.Unlock()
+	m.Streams[streamID] = conn
 }
 
 func (m *Mux) AddStream(conn net.Conn) uint32 {
@@ -32,7 +47,7 @@ func (m *Mux) AddStream(conn net.Conn) uint32 {
 	streamId := m.Counter
 	m.Counter++
 	m.Streams[streamId] = conn
-	
+
 	return streamId
 }
 
