@@ -20,6 +20,10 @@ func main() {
 
 	mux := tunnel.NewMux(tunnelConn)
 
+	// One reader for the tunnel. ReadFrame reads a 9-byte header, then reads
+	// the payload of the declared length, all consecutive on the connection.
+	// Two goroutines calling ReadFrame would race for those bytes and each
+	// parse a half-formed frame.
 	err := readFromTunnel(mux)
 	if err != nil {
 		log.Println("Tunnel Closed:", err)
@@ -27,6 +31,8 @@ func main() {
 	}
 }
 
+// DialLocal creates a connection to the client's local server
+// Returns the connection dialed
 func DialLocal() net.Conn {
 	conn, err := net.Dial("tcp", "localhost:8080")
 
@@ -38,6 +44,11 @@ func DialLocal() net.Conn {
 	return conn
 }
 
+// readFromTunnel is the single reader for relayc's side of the tunnel. It
+// reads frames one at a time and dispatches by message type: OPEN dials
+// localhost and spawns a pump for the new stream, DATA writes payload to
+// the matching local conn, CLOSE tears down the stream. Returns when the
+// tunnel breaks.
 func readFromTunnel(mux *tunnel.Mux) error {
 	for {
 		frame, err := tunnel.ReadFrame(mux.Conn)
@@ -71,16 +82,21 @@ func readFromTunnel(mux *tunnel.Mux) error {
 	}
 }
 
+// WriteLocaltoTunnel is a per-stream pump from the local connection
+// It reads response bytes from the local server and forward them as Data Frame
+// into the tunnel. Sends CLOSE on exit. Returns when the local conn closes
+// or the tunnel breaks.
 func WriteLocaltoTunnel(streamId uint32, localConn net.Conn, mux *tunnel.Mux) {
 	buf := make([]byte, 2048)
 	defer localConn.Close()
 	for {
 		n, err := localConn.Read(buf)
 		if err != nil {
-			// EOF is normal after an http response, should not be logged
+			// io.EOF: normal end of an HTTP response body.
+			// net.ErrClosed: readFromTunnel closed this conn (CLOSE frame arrived
+			// while we were mid-Read). Both are expected, so don't log
 			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 				log.Println("Errors reading from local connection: ", err)
-				break
 			}
 
 			mux.RemoveStream(streamId)
