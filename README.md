@@ -133,7 +133,7 @@ Being built in stages. Known gaps in the current implementation:
 
 - **Single tunnel only** - `relayd` accepts one `relayc` connection at a time for now. Multi-tenant subdomain routing is planned for M7(Milestone 7).
 - **No flow control** - a slow visitor can cause response bytes to queue up in memory. Long-running scenarios with many slow users would degrade throughput or exhaust memory. HTTP/2's WINDOW_UPDATE mechanism is planned as the fix, parked for a future revisit.
-- **Best-effort cleanup on tunnel failure** - when the tunnel breaks, active streams rely on process exit for FD cleanup. Would need coordinated shutdown (e.g. via `context.Context`) if the relay were to auto-reconnect.
+- **Best-effort cleanup on tunnel failure** - when the tunnel breaks, active streams rely on process exit for FD cleanup. It would need coordinated shutdown (e.g. via `context.Context`) if the relay were to auto-reconnect.
 - **No TLS or authentication yet** - production deployment (planned for M8) will require both.
 
 ## Milestones

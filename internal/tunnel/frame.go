@@ -9,7 +9,7 @@ import (
 	"io"
 )
 
-// Frame is a unit of communication on the tunnel. Each Frame instance 
+// Frame is a unit of communication on the tunnel. Each Frame instance
 // carries a stream identifier so many streams can share one tunnel(for multiplexing),
 // a message type, and an optional payload.
 type Frame struct {
