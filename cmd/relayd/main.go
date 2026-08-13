@@ -1,15 +1,28 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 
 	"github.com/Ajibose/Relay/internal/tunnel"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
+	db, err := sql.Open("sqlite", "app.db?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		log.Fatalf("Error loading the Database: %v", err)
+	}
+
+	_, err = db.Exec(createCaptureTable)
+	if err != nil {
+		log.Fatalf("Error creating capture Table: %v", err)
+	}
+
 	cListener, cErr := net.Listen("tcp", ":5000")
 	if cErr != nil {
 		fmt.Println("Failed to create Listener", cErr)
@@ -37,18 +50,23 @@ func main() {
 
 	m := tunnel.NewMux(clientConn)
 
+	store := CaptureStore{
+		active: make(map[uint32]*Capture),
+		db:     db,
+	}
+
 	// AcceptVisitorConnections runs in the background. writeToVisitors runs in main
 	// so it block here until the tunnel breaks. When it returns, main exits and
 	// deferred Close()s fire.
-	go AcceptVisitorConnections(vListener, m)
-	writeToVisitors(m)
+	go AcceptVisitorConnections(vListener, m, &store)
+	writeToVisitors(m, &store)
 }
 
 // writeToVisitors is the single reader for relayd's side of the tunnel.
 // It reads frames, looks up the visitor conn by streamId, and dispatches
 // by message type. Returns when the tunnel breaks; io.EOF is expected on
 // peer shutdown and not logged.
-func writeToVisitors(m *tunnel.Mux) error {
+func writeToVisitors(m *tunnel.Mux, store *CaptureStore) error {
 	for {
 		f, err := tunnel.ReadFrame(m.Conn)
 		if err != nil {
@@ -68,9 +86,20 @@ func writeToVisitors(m *tunnel.Mux) error {
 			continue
 		case tunnel.CLOSE:
 			visitorConn.Close()
+			capture, ok := store.Get(f.StreamId)
+			if ok {
+				capture.ResponseComplete = true
+			}
 			m.RemoveStream(f.StreamId)
 		default:
-			visitorConn.Write(f.Payload)
+			_, err := visitorConn.Write(f.Payload)
+			if err == nil {
+				capture, ok := store.Get(f.StreamId)
+				if ok {
+					capture.ResponseStarted = true
+					capture.appendResponse(f.Payload)
+				}
+			}
 		}
 	}
 }
@@ -79,7 +108,7 @@ func writeToVisitors(m *tunnel.Mux) error {
 // and spawns a new goroutine to write the visitor's bytes to the tunnel.
 // Each visitor connection get a new stream Id and pump goroutine so one visitor's traffic
 // doesn't block the Accept loop
-func AcceptVisitorConnections(vListener net.Listener, m *tunnel.Mux) {
+func AcceptVisitorConnections(vListener net.Listener, m *tunnel.Mux, store *CaptureStore) {
 	for {
 		visitorConn, visitorErr := vListener.Accept()
 		if visitorErr != nil {
@@ -89,7 +118,7 @@ func AcceptVisitorConnections(vListener net.Listener, m *tunnel.Mux) {
 
 		streamId := m.AddStream(visitorConn)
 
-		go writeToTunnel(visitorConn, streamId, m)
+		go writeToTunnel(visitorConn, streamId, m, store)
 	}
 }
 
@@ -97,11 +126,14 @@ func AcceptVisitorConnections(vListener net.Listener, m *tunnel.Mux) {
 // Bytes chunks from visitor are wrapped in a Frame, tagged the streamId
 // assigned to the connection. It send OPEN Frame at the start and CLOSE at the end
 // If tunnel broke or visitor connection closes, it returns
-func writeToTunnel(visitorConn net.Conn, streamId uint32, m *tunnel.Mux) {
+func writeToTunnel(visitorConn net.Conn, streamId uint32, m *tunnel.Mux, store *CaptureStore) {
 	// RemoveStream first, then Close since defer run in reverse. Both fire on any exit
 	// path (visitor error, tunnel error, panic) so cleanup is guaranteed.
 	defer visitorConn.Close()
 	defer m.RemoveStream(streamId)
+
+	// TODO: TunnelId to be implemented in M7 so 1 would be chnage to per client ID
+	capture := store.Start("1", streamId)
 
 	err := m.WriteFrame(streamId, tunnel.OPEN, nil)
 	if err != nil {
@@ -113,12 +145,20 @@ func writeToTunnel(visitorConn net.Conn, streamId uint32, m *tunnel.Mux) {
 		n, err := visitorConn.Read(buf)
 
 		if err != nil {
+			if !capture.ResponseStarted {
+				store.Flush(capture, streamId, "visitor_disconnected_before_response")
+			} else if capture.ResponseStarted && capture.ResponseComplete {
+				store.Flush(capture, streamId, "ok")
+			} else if capture.ResponseStarted && !capture.ResponseComplete {
+				store.Flush(capture, streamId, "response_incomplete_or_raced")
+			}
 			// Visitor conn is dead. Notify the peer so it can clean up its
 			// side; ignore the error since we're exiting either way.
 			m.WriteFrame(streamId, tunnel.CLOSE, nil)
 			return
 		}
 
+		capture.appendRequest(buf[:n])
 		err = m.WriteFrame(streamId, tunnel.DATA, buf[:n])
 		if err != nil {
 			return // tunnel broken up mid-stream, give up on the stream

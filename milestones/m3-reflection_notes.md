@@ -1,0 +1,13 @@
+# Reflection
+
+I wanted outcome to record why a capture ended badly, not just that it did — for a debugging tool, "the response never came" and "everything worked fine" need to look different in the data.
+
+My first idea was to check whether the captured request itself was complete when the visitor's connection dropped. But an unexpected error can still happen even after the request is fully received, before the response is sent — so checking request completeness doesn't tell me anything about what happened afterward. It only covers a failure that isn't even the one I actually care about.
+
+So I tried a single boolean, ResponseStarted, set the moment the first response chunk reaches the visitor. That didn't fully solve it either, because a response can be mid-write when the visitor disconnects — the boolean can't tell "response fully delivered" apart from "response started, then cut off partway." I first thought about setting the flag inside appendResponse itself, but that doesn't mean the response has actually been sent — there's still a chance the write to the visitor fails even though the bytes were captured. So I moved the flag to fire only after visitorConn.Write actually succeeds, since that's the closest thing to a real signal I have.
+
+Then I added a second boolean, ResponseComplete, set when relayc's CLOSE frame confirms the local server finished sending normally. That let me tell "started and finished" apart from "started, never finished" — until I realized the CLOSE frame and the visitor's own disconnect are two completely separate, unsynchronized events on two different connections. There's no guarantee which one relayd sees first. This is the same shape of problem as the double-close race from M2 — two goroutines racing on the same resource with no ordering between them — just showing up again here. A fast, fully successful exchange can still read as "incomplete or raced" if the visitor's TCP connection drops before the CLOSE frame gets processed, purely because of timing, not because anything actually failed.
+
+Underneath all three attempts is the same wall: TCP can't confirm end-to-end delivery from where relayd sits. A successful Write only means the OS accepted the bytes into its own send buffer — not that the visitor's application ever received or rendered them. That's not something more flags can fix.
+
+I kept the two-boolean design and three outcome states, but renamed the ambiguous one to response_incomplete_or_raced instead of asserting certainty I don't have. Parked the race itself — no ordering guarantee exists between the visitor's disconnect and relayc's CLOSE frame, and fixing that for real would need something like sequence numbers or a grace period before deciding, which is more than v1 needs.
