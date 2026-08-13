@@ -141,7 +141,7 @@ Being built in stages. Known gaps in the current implementation:
 - [x] M0 - Two-party byte relay
 - [x] M1 - Single-request HTTP tunnel
 - [x] M2 - Multiplexed tunnel with custom frame protocol
-- [ ] M3 - Request capture (SQLite)
+- [x] M3 - Request capture (SQLite)
 - [ ] M4 - Inspector API + minimal UI
 - [ ] M5 - Replay
 - [ ] M6 - Real-time inspector (SSE)
